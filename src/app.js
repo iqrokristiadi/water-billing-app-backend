@@ -10,6 +10,7 @@ import { successResponse } from "./utils/response.js";
 // Routes
 import authRoutes from "./routes/auth.routes.js";
 import userRoutes from "./routes/user.routes.js";
+import customerRoutes from "./routes/customer.routes.js";
 
 dotenv.config();
 
@@ -25,6 +26,7 @@ app.use(morgan("dev"));
 // Routes
 app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/users", userRoutes);
+app.use("/api/v1/customers", customerRoutes);
 
 // Health check route
 app.get("/api/v1/health", (req, res) => {
