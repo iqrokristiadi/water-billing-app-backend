@@ -2,6 +2,7 @@ import Customer from "../models/customer.model.js";
 import AppError from "../utils/appError.js";
 import { successResponse } from "../utils/response.js";
 import asyncHandler from "../utils/asyncHandler.js";
+import APIFeatures from "../utils/apiFeatures.js";
 import User from "../models/user.model.js";
 
 /*
@@ -42,14 +43,8 @@ export const createCustomer = asyncHandler(async (req, res, next) => {
  */
 
 export const getAllCustomers = asyncHandler(async (req, res, next) => {
-  const page = parseInt(req.query.page) || 1;
-  const limit = parseInt(req.query.limit) || 10;
-  const skip = (page - 1) * limit;
+  // Step 1: match users (for search by name/email)
   const search = req.query.search || "";
-  const sortBy = req.query.sort || "-createdAt";
-  const fields = req.query.fields?.split(",").join(" ") || "";
-
-  // 🔹 Step 1: Find matching users (by name/email)
   const matchedUsers = await User.find({
     $or: [
       { name: { $regex: search, $options: "i" } },
@@ -59,29 +54,29 @@ export const getAllCustomers = asyncHandler(async (req, res, next) => {
 
   const userIds = matchedUsers.map((u) => u._id);
 
-  // 🔹 Step 2: Search customers either by their own fields or matched users
-  const query = {
+  // Step 2: build base query
+  const baseQuery = Customer.find({
     $or: [
       { user: { $in: userIds } },
       { meterNumber: { $regex: search, $options: "i" } },
       { address: { $regex: search, $options: "i" } },
     ],
-  };
+  }).populate("user", "name email role");
 
-  const total = await Customer.countDocuments(query);
-  const customers = await Customer.find(query)
-    .select(fields)
-    .populate("user", "name email role")
-    .skip(skip)
-    .limit(limit)
-    .sort(sortBy);
+  // Step 3: apply API features
+  const features = new APIFeatures(baseQuery, req.query)
+    .sort()
+    .limitFields()
+    .paginate();
 
-  const totalPages = Math.ceil(total / limit);
+  const customers = await features.query;
+  const total = await Customer.countDocuments();
+  const totalPages = Math.ceil(total / (features.limit || 10));
 
   return successResponse(res, "Customers fetched successfully", {
     total,
     totalPages,
-    currentPage: page,
+    currentPage: features.page || 1,
     results: customers.length,
     customers,
   });
