@@ -1,3 +1,4 @@
+import Billing from "../models/billing.model.js";
 import Usage from "../models/usage.model.js";
 import Customer from "../models/customer.model.js";
 import asyncHandler from "../utils/asyncHandler.js";
@@ -92,46 +93,62 @@ export const getUsageById = asyncHandler(async (req, res, next) => {
   @access Admin, Staff
 */
 
-export const updateUsage = async (req, res, next) => {
-  try {
-    const { previousReading, currentReading } = req.body;
+/*
+  @desc   Update usage record (auto-update billing)
+  @route  PATCH /api/v1/usages/:id
+  @access Admin, Staff
+*/
+export const updateUsage = asyncHandler(async (req, res, next) => {
+  const { previousReading, currentReading } = req.body;
 
-    const usage = await Usage.findById(req.params.id);
-    if (!usage) return next(new AppError("Usage not found", 404));
+  const usage = await Usage.findById(req.params.id);
+  if (!usage) return next(new AppError("Usage not found", 404));
 
-    // 🧠 Validate before updating
-    if (
-      currentReading !== undefined &&
-      previousReading !== undefined &&
-      currentReading < previousReading
-    ) {
-      return next(
-        new AppError(
-          "Validation error: Current reading cannot be less than previous reading",
-          400
-        )
-      );
-    }
-
-    // Update values safely
-    if (previousReading !== undefined) usage.previousReading = previousReading;
-    if (currentReading !== undefined) usage.currentReading = currentReading;
-
-    // Auto-calculate usage and inactive flag
-    usage.usage = usage.currentReading - usage.previousReading;
-    usage.isInactive = usage.usage === 0;
-
-    await usage.save();
-
-    res.status(200).json({
-      status: "success",
-      message: "Usage updated successfully",
-      data: usage,
-    });
-  } catch (error) {
-    next(error);
+  // 🧠 Validation
+  if (
+    currentReading !== undefined &&
+    previousReading !== undefined &&
+    currentReading < previousReading
+  ) {
+    return next(
+      new AppError(
+        "Validation error: Current reading cannot be less than previous reading",
+        400
+      )
+    );
   }
-};
+
+  // ✅ Update usage fields
+  if (previousReading !== undefined) usage.previousReading = previousReading;
+  if (currentReading !== undefined) usage.currentReading = currentReading;
+
+  usage.usage = usage.currentReading - usage.previousReading;
+  usage.isInactive = usage.usage === 0;
+
+  await usage.save();
+
+  // ✅ Auto-update Billing after usage changes
+  const billing = await Billing.findOne({ usage: usage._id });
+  if (billing) {
+    billing.totalUsage = usage.usage;
+
+    // Apply rule: baseFee only if inactive
+    billing.totalAmount = usage.isInactive
+      ? billing.baseFee
+      : usage.usage * billing.unitPrice;
+
+    await billing.save();
+  }
+
+  return res.status(200).json({
+    status: "success",
+    message: "Usage updated successfully",
+    data: {
+      usage,
+      ...(billing && { billing }), // include updated billing if found
+    },
+  });
+});
 
 /*
   @desc   Delete usage record

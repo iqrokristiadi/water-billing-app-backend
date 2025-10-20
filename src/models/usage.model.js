@@ -1,3 +1,4 @@
+// src/models/usage.model.js
 import mongoose from "mongoose";
 
 const usageSchema = new mongoose.Schema(
@@ -65,7 +66,6 @@ usageSchema.pre("save", function (next) {
 usageSchema.pre("findOneAndUpdate", function (next) {
   const update = this.getUpdate();
 
-  // only recalc if readings exist in update
   if (
     update.previousReading !== undefined ||
     update.currentReading !== undefined
@@ -84,6 +84,66 @@ usageSchema.pre("findOneAndUpdate", function (next) {
   }
 
   next();
+});
+
+// ✅ Auto-create billing after new usage is saved
+usageSchema.post("save", async function (doc, next) {
+  try {
+    const Billing = (await import("./billing.model.js")).default;
+
+    // If a billing record already exists, skip
+    const existingBill = await Billing.findOne({ usage: doc._id });
+    if (existingBill) return next();
+
+    // Auto-create billing entry
+    await Billing.create({
+      customer: doc.customer,
+      usage: doc._id,
+      month: doc.month,
+      year: doc.year,
+      totalUsage: doc.usage,
+    });
+
+    next();
+  } catch (err) {
+    console.error("Auto billing creation failed:", err);
+    next(err);
+  }
+});
+
+// ✅ Auto-update billing if usage is updated
+usageSchema.post("findOneAndUpdate", async function (result, next) {
+  try {
+    if (!result) return next();
+    const Billing = (await import("./billing.model.js")).default;
+
+    const billing = await Billing.findOne({ usage: result._id });
+    if (!billing) {
+      // If no billing found (shouldn't happen), create one automatically
+      await Billing.create({
+        customer: result.customer,
+        usage: result._id,
+        month: result.month,
+        year: result.year,
+        totalUsage: result.usage,
+      });
+      return next();
+    }
+
+    // Recalculate total amount
+    billing.totalUsage = result.usage;
+    billing.totalAmount = result.isInactive
+      ? billing.baseFee // inactive = base fee only
+      : billing.baseFee + result.usage * billing.unitPrice; // active = usage + base fee
+
+    billing.updatedAt = new Date();
+    await billing.save();
+
+    next();
+  } catch (err) {
+    console.error("Auto billing update failed:", err);
+    next(err);
+  }
 });
 
 // include virtuals in toJSON / toObject
