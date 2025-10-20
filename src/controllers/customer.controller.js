@@ -14,9 +14,22 @@ import User from "../models/user.model.js";
 export const createCustomer = asyncHandler(async (req, res, next) => {
   const { name, address, phone, email, meterNumber, user } = req.body;
 
+  // Check if meter number already exists
   const existingMeter = await Customer.findOne({ meterNumber });
   if (existingMeter) {
     return next(new AppError("Meter number already exists", 400));
+  }
+
+  // Check if email already exists
+  const existingEmail = await Customer.findOne({ email });
+  if (existingEmail) {
+    return next(new AppError("Email already exists", 400));
+  }
+
+  // Check if user is already linked to another customer
+  const existingUser = await Customer.findOne({ user });
+  if (existingUser) {
+    return next(new AppError("This user already has a customer profile", 400));
   }
 
   const newCustomer = await Customer.create({
@@ -70,7 +83,13 @@ export const getAllCustomers = asyncHandler(async (req, res, next) => {
     .paginate();
 
   const customers = await features.query;
-  const total = await Customer.countDocuments();
+  const total = await Customer.countDocuments({
+    $or: [
+      { user: { $in: userIds } },
+      { meterNumber: { $regex: search, $options: "i" } },
+      { address: { $regex: search, $options: "i" } },
+    ],
+  });
   const totalPages = Math.ceil(total / (features.limit || 10));
 
   return successResponse(res, "Customers fetched successfully", {
@@ -108,6 +127,31 @@ export const getCustomerById = asyncHandler(async (req, res, next) => {
  */
 
 export const updateCustomer = asyncHandler(async (req, res, next) => {
+  const { meterNumber, email } = req.body;
+
+  // Check for duplicate meter number
+  if (meterNumber) {
+    const existingMeter = await Customer.findOne({
+      meterNumber,
+      _id: { $ne: req.params.id }, // exclude the same record
+    });
+    if (existingMeter) {
+      return next(new AppError("Meter number already exists", 400));
+    }
+  }
+
+  // Check for duplicate email
+  if (email) {
+    const existingEmail = await Customer.findOne({
+      email,
+      _id: { $ne: req.params.id },
+    });
+    if (existingEmail) {
+      return next(new AppError("Email already exists", 400));
+    }
+  }
+
+  // Proceed with update
   const updates = req.body;
   const customer = await Customer.findByIdAndUpdate(req.params.id, updates, {
     new: true,
